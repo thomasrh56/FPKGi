@@ -245,7 +245,7 @@ public static class UOBWrapper
 
             byte[] bytes = new byte[size];
             Marshal.Copy(ptr, bytes, 0, size);
-            return Latin1.GetString(bytes);
+            return Encoding.UTF8.GetString(bytes);
         }
 
         int maxRedirects = 5;
@@ -280,7 +280,7 @@ public static class UOBWrapper
                     return null;
                 }
 
-                return Latin1.GetString(data);
+                return Encoding.UTF8.GetString(data);
             }
         }
 

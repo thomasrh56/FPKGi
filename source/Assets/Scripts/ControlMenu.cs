@@ -32,6 +32,7 @@ public class ControlMenu : MonoBehaviour
     private float
         inputCooldown = 0.20f,
         cooldownTimer = 0.00f;
+    private bool queueLeftWasHeld = false;
 
     public Scrollbar content_scrollbar,
         queue_scrollbar;
@@ -42,7 +43,7 @@ public class ControlMenu : MonoBehaviour
     #endregion
 
     #region Variables
-    private bool menuLoaded = false, isDownloading = false;
+    private bool menuLoaded = false, isDownloading = false, isQueueProcessing = false;
 
     public static bool reloadTriggered = false;
 
@@ -113,6 +114,7 @@ public class ControlMenu : MonoBehaviour
         }
 
         isDownloading = false;
+        isQueueProcessing = false;
 
         UI.ShowUIState(null);
 
@@ -150,9 +152,6 @@ public class ControlMenu : MonoBehaviour
               ewmaAlpha = 0.25f,
 
               previousDownloadedBytes = 0f;
-
-        if (isConsole)
-            UOB.ResetDownloadVars();
 
         isDownloading = true;
 
@@ -376,9 +375,6 @@ public class ControlMenu : MonoBehaviour
 
               previousDownloadedBytes = 0f;
 
-        if (isConsole)
-            UOB.ResetDownloadVars();
-
         isDownloading = true;
 
         while (isDownloading && !hasDownloadCompleted)
@@ -503,6 +499,8 @@ public class ControlMenu : MonoBehaviour
     {
         if (queueList.Count == 0) yield break;
 
+        isQueueProcessing = true;
+
         // Close queue canvas
         UI.ShowUIState(null);
 
@@ -598,6 +596,7 @@ public class ControlMenu : MonoBehaviour
 
                     if (isConsole)
                     {
+                        UOB.ResetDownloadVars();
                         UOB.DownloadPkgFile(downloadlink, downloadPath, $"[{gameContent.title_id}] {sanitizedFilename}", true, "NULL");
                     }
 
@@ -666,6 +665,7 @@ public class ControlMenu : MonoBehaviour
             UI.ShowUIState(null);
         }
 
+        isQueueProcessing = false;
         Print(LogType.Log, "Finished processing all queued items");
 
         yield return null;
@@ -734,9 +734,73 @@ public class ControlMenu : MonoBehaviour
     #region User Input Handling
     private async void HandleUserInput()
     {
+        float horizontalInput = Input.GetAxis("Dpad-X") + Input.GetAxis("KB-X");
+        bool leftPressed = horizontalInput < -0.5f && !queueLeftWasHeld;
+
+        if (horizontalInput >= -0.5f)
+            queueLeftWasHeld = false;
+        else
+            queueLeftWasHeld = true;
+
+        if (leftPressed && cooldownTimer <= 0)
+        {
+            if (queueCanvas.activeSelf)
+            {
+                cooldownTimer = inputCooldown;
+                int actualIndex = (queueCurrentPage * queueItemsPerPage) + queueHighlightIndex;
+
+                if (actualIndex >= 0 && actualIndex < queueList.Count)
+                {
+                    string contentUrlToRemove = queueList[actualIndex];
+                    string contentName = "Unknown";
+
+                    if (ContentHandler.allContentCache.ContainsKey(contentUrlToRemove))
+                        contentName = ContentHandler.allContentCache[contentUrlToRemove].name;
+
+                    queueList.RemoveAt(actualIndex);
+
+                    int itemsOnCurrentPage = Mathf.Min(queueItemsPerPage,
+                        queueList.Count - (queueCurrentPage * queueItemsPerPage));
+                    if (queueHighlightIndex >= itemsOnCurrentPage)
+                        queueHighlightIndex = Mathf.Max(0, itemsOnCurrentPage - 1);
+
+                    if (queueList.Count == 0)
+                        queueCurrentPage = 0;
+
+                    Print(LogType.Log, $"Removed '{contentName}' from queue");
+                    UpdateQueueDisplay();
+                    if (queue_scrollbar != null)
+                        UI.UpdateScrollbar();
+                }
+            }
+            else if (!menuCanvas.activeSelf && !detailsCanvas.activeSelf &&
+                     !downloadCanvas.activeSelf && !cancelCanvas.activeSelf &&
+                     !updateCanvas.activeSelf)
+            {
+                cooldownTimer = inputCooldown;
+
+                if (!string.IsNullOrEmpty(currentContentItem.Key) &&
+                    currentContentItem.Value != null)
+                {
+                    string contentUrl = currentContentItem.Key;
+                    string contentName = currentContentItem.Value.name;
+
+                    if (queueList.Contains(contentUrl))
+                    {
+                        RemoveFromQueueUI(contentUrl);
+                        Print(LogType.Log, $"Removed '{contentName}' from queue");
+                    }
+                    else
+                    {
+                        AddToQueueUI(currentContentItem);
+                        Print(LogType.Log, $"Added '{contentName}' to queue");
+                    }
+                }
+            }
+        }
+
         if (cooldownTimer <= 0)
         {
-            float horizontalInput = Input.GetAxis("Dpad-X") + Input.GetAxis("KB-X");
             float verticalInput =
               Input.GetAxis("LStick-Y") + Input.GetAxis("Dpad-Y") + Input.GetAxis("Mouse-Y");
 
@@ -951,31 +1015,6 @@ public class ControlMenu : MonoBehaviour
                             }
                         }
 
-                        if (horizontalInput < 0 && !menuCanvas.activeSelf && !detailsCanvas.activeSelf && !queueCanvas.activeSelf)
-                        {
-                            cooldownTimer = inputCooldown;
-
-                            string contentUrl = currentContentItem.Key;
-                            string contentName = currentContentItem.Value.name;
-
-                            // Check if item is in queue list
-                            bool inQueueList = queueList.Contains(contentUrl);
-
-
-                            if (inQueueList)
-                            {
-                                // Remove from queue
-                                RemoveFromQueueUI(contentUrl);
-                                Print(LogType.Log, $"Removed '{contentName}' from queue");
-                            }
-                            else
-                            {
-                                // Add to queue
-                                AddToQueueUI(currentContentItem);
-                                Print(LogType.Log, $"Added '{contentName}' to queue");
-                            }
-                        }
-
                         if (Input.GetButtonDown("R3"))
                         {
                             if (queueCanvas.activeSelf)
@@ -1054,43 +1093,6 @@ public class ControlMenu : MonoBehaviour
                                 UI.UpdateScrollbar();
                         }
 
-                        // Handle horizontal input when queue canvas is open
-                        if (queueCanvas.activeSelf && horizontalInput < 0)
-                        {
-                            cooldownTimer = inputCooldown;
-
-                            // Calculate the actual index in the queue list
-                            int actualIndex = (queueCurrentPage * queueItemsPerPage) + queueHighlightIndex;
-
-                            if (actualIndex >= 0 && actualIndex < queueList.Count)
-                            {
-                                string contentUrlToRemove = queueList[actualIndex];
-
-                                // Find the content item to get the name for logging
-                                string contentName = "Unknown";
-
-                                // Search in allContentCache which contains everything
-                                if (ContentHandler.allContentCache.ContainsKey(contentUrlToRemove))
-                                {
-                                    contentName = ContentHandler.allContentCache[contentUrlToRemove].name;
-                                }
-
-                                // Remove from queue
-                                queueList.RemoveAt(actualIndex);
-
-                                // Simple adjustment: if highlight is now out of bounds, move it back
-                                int itemsOnCurrentPage = Mathf.Min(queueItemsPerPage, queueList.Count - (queueCurrentPage * queueItemsPerPage));
-                                if (queueHighlightIndex >= itemsOnCurrentPage)
-                                {
-                                    queueHighlightIndex = Mathf.Max(0, itemsOnCurrentPage - 1);
-                                }
-
-                                Print(LogType.Log, $"Removed '{contentName}' from queue");
-
-                                // Update queue display
-                                UpdateQueueDisplay();
-                            }
-                        }
                     }
                 }
             }
@@ -1100,6 +1102,12 @@ public class ControlMenu : MonoBehaviour
                 // Handle X button press on queue canvas
                 if (queueCanvas.activeSelf)
                 {
+                    if (isDownloading || isQueueProcessing)
+                    {
+                        Print(LogType.Warning, "A queue or package download is already in progress");
+                        return;
+                    }
+
                     if (queueList.Count > 0)
                     {
                         Print(LogType.Log, $"Starting download and install of {queueList.Count} queued items");
@@ -1193,7 +1201,10 @@ public class ControlMenu : MonoBehaviour
                             else
                             {
                                 if (isConsole)
+                                {
+                                    UOB.ResetDownloadVars();
                                     UOB.DownloadPkgFile(downloadlink, downloadPath, $"[{currentContentItem.Value.title_id}] {sanitizedFilename}", true, "NULL");
+                                }
                                 Text name = downloadCanvas.transform.Find("Text/Title")?.GetComponent<Text>();
 
                                 downloadCoroutine = StartCoroutine(UpdateDownloadProgress());

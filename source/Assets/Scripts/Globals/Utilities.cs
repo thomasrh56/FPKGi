@@ -429,6 +429,41 @@ public class Utilities : MonoBehaviour
         public static string FindKeyByValue(Dictionary<string, GameContent> dict, string titleId) =>
             dict.FirstOrDefault(pair => pair.Value.title_id == titleId).Key;
 
+        private static string RepairTextEncoding(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            try
+            {
+                byte[] bytes = Encoding.GetEncoding("ISO-8859-1").GetBytes(text);
+                string repaired = Encoding.UTF8.GetString(bytes);
+
+                if (!repaired.Contains("\uFFFD") && repaired != text)
+                    return repaired;
+            }
+            catch
+            {
+            }
+
+            return text;
+        }
+
+        private static void RepairGameContent(GameContent content)
+        {
+            if (content == null)
+                return;
+
+            content.title_id = RepairTextEncoding(content.title_id);
+            content.region = RepairTextEncoding(content.region);
+            content.name = RepairTextEncoding(content.name);
+            content.version = RepairTextEncoding(content.version);
+            content.release = RepairTextEncoding(content.release);
+            content.size = RepairTextEncoding(content.size);
+            content.min_fw = RepairTextEncoding(content.min_fw);
+            content.cover_url = RepairTextEncoding(content.cover_url);
+        }
+
         private static int ParseGameData(string jsonContent = "", bool preserveExisting = false)
         {
             try
@@ -444,7 +479,10 @@ public class Utilities : MonoBehaviour
                 {
                     var chunk = dataEntries.Skip(i).Take(chunkSize);
                     foreach (var entry in chunk)
+                    {
+                        RepairGameContent(entry.Value);
                         parsedData[entry.Key] = entry.Value;
+                    }
                 }
 
                 return 1;
@@ -482,6 +520,7 @@ public class Utilities : MonoBehaviour
                                 {
                                     if (!processedTitleIds.Contains(entry.Value.title_id))
                                     {
+                                        RepairGameContent(entry.Value);
                                         parsedData[entry.Key] = entry.Value;
                                         processedTitleIds.Add(entry.Value.title_id);
                                     }
